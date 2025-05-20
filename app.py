@@ -12,12 +12,8 @@ import time
 from collections import Counter
 import seaborn as sns
 from dateutil import parser
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
-
-dbUri = os.getenv("DB_URI")
+dbUri = st.secrets["DB_URI"]
 
 nltk.download('stopwords')
 
