@@ -50,25 +50,78 @@ def get_article_links(base_url, max_articles=100):
 
     return list(all_links)[:max_articles]
 
-# Fungsi ambil konten artikel
+# Fungsi ambil konten artikel dengan gambar sampul
 def scrape_article(url):
     try:
         response = requests.get(url)
         soup = BeautifulSoup(response.text, 'html.parser')
 
+        # Ambil title
         title = soup.find("h1")
+        
+        # Ambil paragraf
         paragraphs = soup.find_all("p")
+        
+        # Ambil tanggal publish
         date_tag = soup.find("meta", {"property": "article:published_time"})
         pub_date = parser.parse(date_tag["content"]) if date_tag and date_tag.get("content") else None
+
+        # Ambil gambar sampul - beberapa kemungkinan selector
+        image_url = None
+        
+        # Metode 1: Cari meta tag Open Graph image
+        og_image = soup.find("meta", {"property": "og:image"})
+        if og_image and og_image.get("content"):
+            image_url = og_image["content"]
+        
+        # Metode 2: Jika tidak ada OG image, cari meta tag Twitter image
+        if not image_url:
+            twitter_image = soup.find("meta", {"name": "twitter:image"})
+            if twitter_image and twitter_image.get("content"):
+                image_url = twitter_image["content"]
+        
+        # Metode 3: Cari gambar pertama dalam artikel
+        if not image_url:
+            first_img = soup.find("img")
+            if first_img and first_img.get("src"):
+                img_src = first_img["src"]
+                # Pastikan URL lengkap
+                if img_src.startswith("//"):
+                    image_url = f"https:{img_src}"
+                elif img_src.startswith("/"):
+                    image_url = f"https://hellosehat.com{img_src}"
+                elif img_src.startswith("http"):
+                    image_url = img_src
+        
+        # Metode 4: Cari dalam figure atau div dengan class tertentu
+        if not image_url:
+            figure_img = soup.find("figure")
+            if figure_img:
+                img_tag = figure_img.find("img")
+                if img_tag and img_tag.get("src"):
+                    img_src = img_tag["src"]
+                    if img_src.startswith("//"):
+                        image_url = f"https:{img_src}"
+                    elif img_src.startswith("/"):
+                        image_url = f"https://hellosehat.com{img_src}"
+                    elif img_src.startswith("http"):
+                        image_url = img_src
 
         return {
             "url": url,
             "title": title.get_text(strip=True) if title else "No Title",
             "content": " ".join(p.get_text(strip=True) for p in paragraphs),
-            "published_date": pub_date
+            "published_date": pub_date,
+            "image_url": image_url if image_url else "No Image"
         }
     except Exception as e:
-        return {"url": url, "title": "Error", "content": str(e), "published_date": None}
+        return {
+            "url": url, 
+            "title": "Error", 
+            "content": str(e), 
+            "published_date": None,
+            "image_url": "Error"
+        }
 
 # Stopwords cleaner
 def remove_stopwords(text):
