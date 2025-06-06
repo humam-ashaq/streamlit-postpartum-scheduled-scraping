@@ -87,7 +87,35 @@ def bersihkan_teks(teks):
     teks = teks.lower()
     return teks
 
-# Tombol Streamlit
+def save_to_mongodb(df):
+    try:
+        client = MongoClient(dbUri)
+        db = client["postpartum"]
+        collection = db["articles"]
+        existing_urls = set(doc["url"] for doc in collection.find({}, {"url": 1, "_id": 0}))
+        new_docs = [row for row in df.to_dict("records") if row["url"] not in existing_urls]
+
+        if new_docs:
+            collection.insert_many(new_docs)
+            return len(new_docs), True
+        else:
+            return 0, False
+    except Exception as e:
+        st.error(f"Database Error: {e}")
+        return 0, False
+
+def load_data_from_db():
+    try:
+        client = MongoClient(dbUri)
+        db = client["postpartum"]
+        collection = db["articles"]
+        articles = list(collection.find({}, {"_id": 0}))
+        return pd.DataFrame(articles)
+    except Exception as e:
+        st.error(f"Gagal mengambil data dari MongoDB: {e}")
+        return pd.DataFrame()
+
+# Main process
 if st.button("Mulai Scraping & Visualisasi"):
     with st.spinner("Mengambil daftar artikel dari halaman kategori..."):
         base_url = "https://hellosehat.com/parenting/bayi/perawatan-bayi/"
@@ -95,67 +123,63 @@ if st.button("Mulai Scraping & Visualisasi"):
         st.write(f"Ditemukan {len(article_links)} artikel.")
 
     with st.spinner("Mengambil konten setiap artikel..."):
-        data = []
+        scraped_data = []
         for url in article_links:
-            article_data = scrape_article(url)
-            data.append(article_data)
+            result = scrape_article(url)
+            scraped_data.append(result)
             time.sleep(1)
 
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(scraped_data)
         df["published_date"] = pd.to_datetime(df["published_date"])
-        df["month_year"] = df["published_date"].dt.to_period("M").astype(str)
         df = df[df["published_date"].notna()]
+        df["month_year"] = df["published_date"].dt.to_period("M").astype(str)
 
-        # Simpan ke MongoDB
-        try:
-            client = MongoClient(dbUri)
-            db = client["postpartum"]
-            collection = db["articles"]
-            collection.insert_many(df.to_dict("records"))
-            st.success("Berhasil disimpan ke MongoDB!")
-        except Exception as e:
-            st.error(f"Gagal menyimpan ke MongoDB: {e}")
+    with st.spinner("Menyimpan ke MongoDB..."):
+        inserted_count, inserted = save_to_mongodb(df)
+        if inserted:
+            st.success(f"Berhasil menyimpan {inserted_count} artikel baru ke MongoDB!")
+        else:
+            st.warning("Tidak ada artikel baru yang disimpan. Semua data sudah ada.")
 
-        # Visualisasi data artikel
-        st.subheader("Data Artikel")
-        st.dataframe(df[["title", "url"]])
+    st.markdown("---")
 
-        # Wordcloud
-        st.subheader("Word Cloud")
-        text = " ".join(df["title"].tolist() + df["content"].tolist())
-        clean_text = remove_stopwords(text)
-        clean_text2 = bersihkan_teks(clean_text)
-        wordcloud = WordCloud(width=1000, height=500, background_color="white").generate(clean_text2)
+# Load & visualize
+df = load_data_from_db()
 
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.imshow(wordcloud, interpolation="bilinear")
-        ax.axis("off")
-        st.pyplot(fig)
+if not df.empty:
+    st.subheader("Data Artikel")
+    st.dataframe(df[["title", "url"]])
 
-        # Tren kata terbanyak
-        words = clean_text2.split()
-        word_freq = Counter(words)
-        most_common = word_freq.most_common(20)
+    st.subheader("Word Cloud")
+    all_text = " ".join(df["title"].tolist() + df["content"].tolist())
+    clean_text = remove_stopwords(all_text)
+    clean_text2 = bersihkan_teks(clean_text)
+    wordcloud = WordCloud(width=1000, height=500, background_color="white").generate(clean_text2)
 
-        st.subheader("Tren Kata Terbanyak (Top 20)")
-        wc_df = pd.DataFrame(most_common, columns=["Kata", "Frekuensi"])
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.imshow(wordcloud, interpolation="bilinear")
+    ax.axis("off")
+    st.pyplot(fig)
 
-        fig2, ax2 = plt.subplots(figsize=(12, 6))
-        sns.barplot(data=wc_df, x="Frekuensi", y="Kata", ax=ax2, palette="Blues_d")
-        ax2.set_title("20 Kata Paling Sering Muncul")
-        ax2.set_xlabel("Frekuensi")
-        ax2.set_ylabel("Kata")
-        ax2.bar_label(ax2.containers[0], fmt='%d', label_type='edge', padding=5)
-        st.pyplot(fig2)
+    st.subheader("Tren Kata Terbanyak (Top 20)")
+    word_freq = Counter(clean_text2.split())
+    top_words = word_freq.most_common(20)
+    wc_df = pd.DataFrame(top_words, columns=["Kata", "Frekuensi"])
 
-        # Artikel per bulan
-        st.subheader("Jumlah Artikel per Bulan")
-        monthly_counts = df["month_year"].value_counts().sort_index()
+    fig2, ax2 = plt.subplots(figsize=(12, 6))
+    sns.barplot(data=wc_df, x="Frekuensi", y="Kata", ax=ax2, palette="Blues_d")
+    ax2.set_title("20 Kata Paling Sering Muncul")
+    ax2.bar_label(ax2.containers[0], fmt="%d")
+    st.pyplot(fig2)
 
-        fig3, ax3 = plt.subplots(figsize=(12, 6))
-        sns.barplot(x=monthly_counts.index, y=monthly_counts.values, ax=ax3, palette="viridis")
-        ax3.set_title("Jumlah Artikel Diposting per Bulan")
-        ax3.set_xlabel("Bulan")
-        ax3.set_ylabel("Jumlah Artikel")
-        plt.xticks(rotation=45)
-        st.pyplot(fig3)
+    st.subheader("Jumlah Artikel per Bulan")
+    monthly_counts = df["month_year"].value_counts().sort_index()
+    fig3, ax3 = plt.subplots(figsize=(12, 6))
+    sns.barplot(x=monthly_counts.index, y=monthly_counts.values, ax=ax3, palette="viridis")
+    ax3.set_title("Jumlah Artikel Diposting per Bulan")
+    ax3.set_xlabel("Bulan")
+    ax3.set_ylabel("Jumlah Artikel")
+    plt.xticks(rotation=45)
+    st.pyplot(fig3)
+else:
+    st.info("Belum ada data untuk ditampilkan. Silakan jalankan scraping terlebih dahulu.")
