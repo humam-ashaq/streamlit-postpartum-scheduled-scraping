@@ -90,7 +90,7 @@ def bersihkan_teks(teks):
 def save_to_mongodb(df):
     try:
         client = MongoClient(dbUri)
-        db = client["postpartum"]
+        db = client["momstretch"]
         collection = db["articles"]
         existing_urls = set(doc["url"] for doc in collection.find({}, {"url": 1, "_id": 0}))
         new_docs = [row for row in df.to_dict("records") if row["url"] not in existing_urls]
@@ -107,7 +107,7 @@ def save_to_mongodb(df):
 def load_data_from_db():
     try:
         client = MongoClient(dbUri)
-        db = client["postpartum"]
+        db = client["momstretch"]
         collection = db["articles"]
         articles = list(collection.find({}, {"_id": 0}))
         return pd.DataFrame(articles)
