@@ -149,6 +149,12 @@ def save_to_mongodb(df):
         new_docs = [row for row in df.to_dict("records") if row["url"] not in existing_urls]
 
         if new_docs:
+            # Debug: cek data yang akan diinsert
+            st.write(f"Sample dokumen yang akan disimpan:")
+            if new_docs:
+                sample_doc = new_docs[0]
+                st.json(sample_doc)
+            
             collection.insert_many(new_docs)
             return len(new_docs), True
         else:
@@ -177,17 +183,32 @@ if st.button("Mulai Scraping & Visualisasi"):
 
     with st.spinner("Mengambil konten setiap artikel..."):
         scraped_data = []
-        for url in article_links:
+        for i, url in enumerate(article_links):
             result = scrape_article(url)
             scraped_data.append(result)
+            # Debug: tampilkan progress dan cek image_url
+            if i < 3:  # Tampilkan 3 artikel pertama untuk debug
+                st.write(f"Debug - Artikel {i+1}: {result['title'][:50]}...")
+                st.write(f"Image URL: {result['image_url']}")
             time.sleep(1)
 
         df = pd.DataFrame(scraped_data)
+        
+        # Debug: cek kolom yang ada
+        st.write("Kolom dalam DataFrame:", df.columns.tolist())
+        st.write("Sample data (5 baris pertama):")
+        st.dataframe(df.head())
+        
         df["published_date"] = pd.to_datetime(df["published_date"])
         df = df[df["published_date"].notna()]
         df["month_year"] = df["published_date"].dt.to_period("M").astype(str)
 
     with st.spinner("Menyimpan ke MongoDB..."):
+        # Debug: cek data sebelum disimpan
+        st.write("Data yang akan disimpan ke MongoDB:")
+        st.write(f"Jumlah baris: {len(df)}")
+        st.write(f"Kolom: {df.columns.tolist()}")
+        
         inserted_count, inserted = save_to_mongodb(df)
         if inserted:
             st.success(f"Berhasil menyimpan {inserted_count} artikel baru ke MongoDB!")
@@ -200,8 +221,44 @@ if st.button("Mulai Scraping & Visualisasi"):
 df = load_data_from_db()
 
 if not df.empty:
+    # Debug: cek data yang dimuat dari DB
+    st.write("Data yang dimuat dari MongoDB:")
+    st.write(f"Jumlah baris: {len(df)}")
+    st.write(f"Kolom: {df.columns.tolist()}")
+    
     st.subheader("Data Artikel")
-    st.dataframe(df[["title", "url"]])
+    # Cek apakah kolom image_url ada
+    if 'image_url' in df.columns:
+        display_df = df[["title", "url", "image_url"]].copy()
+        st.dataframe(display_df)
+        
+        # Hitung statistik gambar
+        images_count = len(df[df["image_url"] != "No Image"])
+        st.write(f"Artikel dengan gambar: {images_count}/{len(df)}")
+    else:
+        st.warning("Kolom 'image_url' tidak ditemukan dalam data!")
+        display_df = df[["title", "url"]].copy()
+        st.dataframe(display_df)
+
+    # Tambahan: Preview gambar sampul
+    st.subheader("Preview Gambar Sampul Artikel")
+    
+    # Filter artikel yang memiliki gambar
+    articles_with_images = df[df["image_url"] != "No Image"].head(10)
+    
+    if not articles_with_images.empty:
+        cols = st.columns(2)
+        for idx, (_, row) in enumerate(articles_with_images.iterrows()):
+            with cols[idx % 2]:
+                st.write(f"**{row['title'][:50]}...**")
+                try:
+                    st.image(row['image_url'], width=300)
+                except:
+                    st.write("❌ Gambar tidak dapat dimuat")
+                st.write(f"[Baca artikel]({row['url']})")
+                st.markdown("---")
+    else:
+        st.warning("Tidak ada artikel dengan gambar yang ditemukan.")
 
     st.subheader("Word Cloud")
     all_text = " ".join(df["title"].tolist() + df["content"].tolist())
@@ -234,5 +291,14 @@ if not df.empty:
     ax3.set_ylabel("Jumlah Artikel")
     plt.xticks(rotation=45)
     st.pyplot(fig3)
+
+    # Statistik gambar
+    st.subheader("Statistik Gambar")
+    total_articles = len(df)
+    articles_with_images = len(df[df["image_url"] != "No Image"])
+    st.metric("Total Artikel", total_articles)
+    st.metric("Artikel dengan Gambar", articles_with_images)
+    st.metric("Persentase Artikel dengan Gambar", f"{(articles_with_images/total_articles*100):.1f}%")
+
 else:
     st.info("Belum ada data untuk ditampilkan. Silakan jalankan scraping terlebih dahulu.")
